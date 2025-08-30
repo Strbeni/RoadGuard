@@ -14,6 +14,7 @@ import { auth } from "../firebase";
 import { signOut } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "./ui/use-toast";
+import NotificationBell from "./NotificationBell";
 
 const MainNav = () => {
   const [user, setUser] = useState<any>(null);
@@ -87,6 +88,7 @@ const MainNav = () => {
         
         {user ? (
           <div className="flex items-center space-x-4">
+            <NotificationBell />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-8 w-8 rounded-full">

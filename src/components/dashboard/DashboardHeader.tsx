@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import NotificationBell from "@/components/NotificationBell";
 
 interface DashboardHeaderProps {
   isOpenForRequests: boolean;
@@ -113,14 +114,7 @@ function DashboardHeader({
           <span>{isOpenForRequests ? "Open for Request" : "Closed"}</span>
         </Button>
 
-        <div className="relative">
-          <Button variant="outline" size="sm">
-            <Bell className="h-4 w-4" />
-          </Button>
-          <Badge className="absolute -top-2 -right-2 h-5 w-5 flex items-center justify-center p-0 text-xs">
-            3
-          </Badge>
-        </div>
+        <NotificationBell />
 
         <Avatar>
           <AvatarImage src="/placeholder.svg" alt="Admin" />

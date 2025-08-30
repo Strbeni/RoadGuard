@@ -9,6 +9,11 @@ import { format } from "date-fns";
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
+import { subscribeAllPendingRequests, acceptRequest, Request as FirestoreRequest } from "@/services/requests";
+import { sendNotification } from "@/services/notifications";
+import { subscribeMessages, RequestMessage } from "@/services/messages";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import NotificationBell from "@/components/NotificationBell";
 
 // Fix for default marker icons in Leaflet with Webpack
 const defaultIcon = new L.Icon({
@@ -43,6 +48,7 @@ import {
 
 interface ServiceRequest {
   id: string;
+  requestUserId?: string;
   customerName: string;
   vehicleType: string;
   serviceType: string;
@@ -79,6 +85,13 @@ const WorkerDashboard = () => {
   const [mapCenter, setMapCenter] = useState<[number, number]>([27.7172, 85.3240]); // Default to Kathmandu
   const [locationError, setLocationError] = useState<string | null>(null);
   const mapRef = useRef<L.Map>(null);
+  const [mapOpen, setMapOpen] = useState(false);
+  const [mapCoords, setMapCoords] = useState<[number, number] | null>(null);
+  const [mapAddress, setMapAddress] = useState<string>("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<ServiceRequest | null>(null);
+  const [messages, setMessages] = useState<RequestMessage[]>([]);
+  const [sortBy, setSortBy] = useState<'recent' | 'nearest' | 'urgency'>('recent');
 
   // Request user location on component mount
   useEffect(() => {
@@ -105,6 +118,43 @@ const WorkerDashboard = () => {
       updateRequestDistances(mapCenter[0], mapCenter[1]);
     }
   }, []);
+
+  // Subscribe to available (pending) requests in real-time
+  useEffect(() => {
+    const unsubscribe = subscribeAllPendingRequests((all: FirestoreRequest[]) => {
+      const mapped: ServiceRequest[] = all.map((r) => {
+        const created = (r as any).createdAt?.toDate ? (r as any).createdAt.toDate() : ((r as any).createdAt || new Date());
+        const lat = r.location?.lat ?? 0;
+        const lng = r.location?.lng ?? 0;
+        return {
+          id: r.id || `${lat}-${lng}-${Date.now()}`,
+          requestUserId: r.userId,
+          customerName: r.userId ? `User ${r.userId.slice(0, 6)}` : 'Customer',
+          vehicleType: r.vehicleType || 'Vehicle',
+          serviceType: r.serviceType,
+          location: r.location?.address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+          coordinates: [lat, lng],
+          distance: '—',
+          urgency: (r.urgency as ServiceRequest['urgency']) || 'normal',
+          estimatedPay: '$60 - $120',
+          description: r.description || '',
+          createdAt: created as Date,
+        };
+      });
+      // Apply sorting
+      const sorted = sortRequests(mapped, sortBy, userLocation);
+      setAvailableRequests(sorted);
+      if (userLocation) updateRequestDistances(userLocation[0], userLocation[1]);
+    });
+    return unsubscribe;
+  }, [userLocation, sortBy]);
+
+  // Subscribe to messages for selected request
+  useEffect(() => {
+    if (!detailsOpen || !selectedRequest?.id) return;
+    const unsub = subscribeMessages(selectedRequest.id, setMessages, console.error);
+    return () => unsub();
+  }, [detailsOpen, selectedRequest?.id]);
 
   // Update distances for available requests based on user's location
   const updateRequestDistances = (lat: number, lng: number) => {
@@ -136,43 +186,24 @@ const WorkerDashboard = () => {
     return R * c;
   };
 
-  // Mock data - in a real app, this would come from your backend
-  useEffect(() => {
-    const mockRequests: ServiceRequest[] = [
-      {
-        id: '1',
-        customerName: 'John Smith',
-        vehicleType: 'Toyota Camry',
-        serviceType: 'Battery Jump',
-        location: '123 Main St, City',
-        coordinates: [40.7128, -74.0060],
-        distance: '2.5 miles',
-        urgency: 'high',
-        estimatedPay: '$75 - $125',
-        description: 'Car won\'t start, likely dead battery',
-        createdAt: new Date()
-      },
-      {
-        id: '2',
-        customerName: 'Sarah Johnson',
-        vehicleType: 'Honda CR-V',
-        serviceType: 'Tire Change',
-        location: '456 Oak Ave, Town',
-        coordinates: [40.7128, -74.0060],
-        distance: '1.2 miles',
-        urgency: 'normal',
-        estimatedPay: '$60 - $90',
-        description: 'Flat tire, spare available',
-        createdAt: new Date()
-      }
-    ];
+  // distances are recalculated elsewhere once data and location load
 
-    setAvailableRequests(mockRequests);
-  }, []);
-
-  const handleAcceptRequest = (requestId: string) => {
+  const handleAcceptRequest = async (requestId: string) => {
     const request = availableRequests.find(r => r.id === requestId);
-    if (request) {
+    if (!request) return;
+    try {
+      if (currentUser?.uid) {
+        await acceptRequest(requestId, currentUser.uid);
+        // notify user
+        if (request.requestUserId) {
+          await sendNotification(request.requestUserId, {
+            title: 'Request Accepted',
+            body: `Your ${request.serviceType} request was accepted by a mechanic.`,
+            type: 'request_update',
+            data: { requestId },
+          });
+        }
+      }
       const newJob: AcceptedJob = {
         id: request.id,
         customerName: request.customerName,
@@ -188,7 +219,15 @@ const WorkerDashboard = () => {
       setAcceptedJob(newJob);
       setWorkerStatus('busy');
       setActiveTab('accepted');
+    } catch (e) {
+      console.error('Failed to accept request:', e);
     }
+  };
+
+  const openLocationModal = (request: ServiceRequest) => {
+    setMapCoords(request.coordinates);
+    setMapAddress(request.location);
+    setMapOpen(true);
   };
 
   const handleDeclineRequest = (requestId: string) => {
@@ -198,6 +237,16 @@ const WorkerDashboard = () => {
   const updateJobStatus = (status: AcceptedJob['status']) => {
     if (acceptedJob) {
       setAcceptedJob({ ...acceptedJob, status });
+      // notify user about status change
+      const req = availableRequests.find(r => r.id === acceptedJob.id);
+      if (req?.requestUserId) {
+        sendNotification(req.requestUserId, {
+          title: 'Job Update',
+          body: `Mechanic status changed to ${getStatusText(status)}.`,
+          type: 'request_update',
+          data: { requestId: acceptedJob.id, status },
+        }).catch(console.error);
+      }
       if (status === 'completed') {
         // In a real app, this would update the job status in your backend
         setTimeout(() => {
@@ -207,6 +256,31 @@ const WorkerDashboard = () => {
         }, 2000);
       }
     }
+  };
+
+  const sortRequests = (
+    list: ServiceRequest[],
+    sort: 'recent' | 'nearest' | 'urgency',
+    loc: [number, number] | null
+  ) => {
+    const copy = [...list];
+    if (sort === 'recent') {
+      copy.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    } else if (sort === 'nearest' && loc) {
+      copy.sort((a, b) => (
+        calculateDistance(loc[0], loc[1], a.coordinates[0], a.coordinates[1]) -
+        calculateDistance(loc[0], loc[1], b.coordinates[0], b.coordinates[1])
+      ));
+    } else if (sort === 'urgency') {
+      const rank: Record<ServiceRequest['urgency'], number> = { emergency: 0, high: 1, normal: 2, low: 3 };
+      copy.sort((a, b) => rank[a.urgency] - rank[b.urgency]);
+    }
+    return copy;
+  };
+
+  const openDetails = (req: ServiceRequest) => {
+    setSelectedRequest(req);
+    setDetailsOpen(true);
   };
 
   const getUrgencyColor = (urgency: 'emergency' | 'high' | 'normal' | 'low') => {
@@ -268,6 +342,7 @@ const WorkerDashboard = () => {
               {workerStatus === 'available' ? 'Online' : workerStatus === 'busy' ? 'Busy' : 'Offline'}
             </Button>
             <div className="flex items-center space-x-2">
+              <NotificationBell />
               <Avatar className="h-8 w-8">
                 <AvatarImage src={currentUser?.photoURL || ''} alt={currentUser?.displayName || 'User'} />
                 <AvatarFallback>
@@ -359,7 +434,21 @@ const WorkerDashboard = () => {
         {/* Available Requests */}
         {workerStatus === 'available' && !acceptedJob && (
           <div className="space-y-3 w-[800px]">
-            <h2 className="font-semibold text-lg">Available Requests Near You</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-lg">Available Requests Near You</h2>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Sort by</span>
+                <select
+                  className="border rounded px-2 py-1 text-sm"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                >
+                  <option value="recent">Most Recent</option>
+                  <option value="nearest">Nearest</option>
+                  <option value="urgency">Urgency</option>
+                </select>
+              </div>
+            </div>
             {availableRequests.length === 0 ? (
               <Card>
                 <CardContent className="p-6 text-center">
@@ -372,7 +461,7 @@ const WorkerDashboard = () => {
               </Card>
             ) : (
               availableRequests.map((request) => (
-                <Card key={request.id} className="shadow-sm">
+                <Card key={request.id} className="shadow-sm cursor-pointer" onClick={() => openDetails(request)}>
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between mb-3">
                       <div>
@@ -408,15 +497,22 @@ const WorkerDashboard = () => {
                     <div className="flex gap-2">
                       <Button 
                         variant="outline" 
+                        size="sm"
+                        onClick={(e) => { e.stopPropagation(); openLocationModal(request); }}
+                      >
+                        View Location
+                      </Button>
+                      <Button 
+                        variant="outline" 
                         size="sm" 
-                        onClick={() => handleDeclineRequest(request.id)}
+                        onClick={(e) => { e.stopPropagation(); handleDeclineRequest(request.id); }}
                         className="flex-1"
                       >
                         <XCircle className="h-4 w-4 mr-2" />
                         Decline
                       </Button>
                       <Button 
-                        onClick={() => handleAcceptRequest(request.id)}
+                        onClick={(e) => { e.stopPropagation(); handleAcceptRequest(request.id); }}
                         className="flex-1 bg-success hover:bg-success/90"
                       >
                         <CheckCircle className="h-4 w-4 mr-2" />
@@ -529,8 +625,78 @@ const WorkerDashboard = () => {
           </Card>
         )}
       </main>
+      {/* Location Modal */}
+      <Dialog open={mapOpen} onOpenChange={setMapOpen}>
+        <DialogContent className="max-w-2xl p-0">
+          <DialogHeader className="px-6 pt-4">
+            <DialogTitle>Request Location</DialogTitle>
+          </DialogHeader>
+          <div className="px-6 pb-4 text-sm text-muted-foreground">{mapAddress}</div>
+          <div className="h-[420px] w-full">
+            {mapCoords && (
+              <MapContainer 
+                center={mapCoords} 
+                zoom={14} 
+                style={{ height: '100%', width: '100%' }}
+              >
+                <TileLayer
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                />
+                <Marker position={mapCoords} icon={defaultIcon}>
+                  <Popup>{mapAddress || 'Request Location'}</Popup>
+                </Marker>
+              </MapContainer>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Request Details Dialog */}
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Request Details</DialogTitle>
+          </DialogHeader>
+          {selectedRequest && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <div className="text-sm text-muted-foreground">Service</div>
+                <div className="font-medium">{selectedRequest.serviceType}</div>
+                <div className="text-sm text-muted-foreground">Vehicle</div>
+                <div>{selectedRequest.vehicleType}</div>
+                <div className="text-sm text-muted-foreground">Location</div>
+                <div>{selectedRequest.location}</div>
+                {selectedRequest.description && (
+                  <div>
+                    <div className="text-sm text-muted-foreground">Description</div>
+                    <div className="text-sm bg-muted/50 p-2 rounded">{selectedRequest.description}</div>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm text-muted-foreground">Messages</div>
+                <div className="h-48 overflow-auto rounded border p-2 space-y-2 bg-background">
+                  {messages.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">No messages yet</div>
+                  ) : (
+                    messages.map((m) => (
+                      <div key={m.id} className="text-sm">
+                        <div className="font-medium">{m.fromUserId === currentUser?.uid ? 'You' : 'User'}</div>
+                        <div className="">{m.body}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {m.createdAt?.toDate ? m.createdAt.toDate().toLocaleString() : ''}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
-};
+}
 
 export default WorkerDashboard;

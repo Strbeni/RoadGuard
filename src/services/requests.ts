@@ -5,7 +5,10 @@ import {
   query, 
   where, 
   getDocs, 
-  orderBy 
+  orderBy,
+  onSnapshot,
+  doc,
+  updateDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -27,6 +30,47 @@ export interface Request {
   updatedAt: any;
   assignedTo?: string;
 }
+
+/**
+ * Subscribes to all pending service requests in real-time (for workers/admins)
+ * Returns an unsubscribe function.
+ */
+export const subscribeAllPendingRequests = (
+  onChange: (requests: Request[]) => void,
+  onError?: (error: any) => void
+) => {
+  const q = query(
+    collection(db, 'requests'),
+    where('status', '==', 'pending'),
+    orderBy('createdAt', 'desc')
+  );
+
+  const unsubscribe = onSnapshot(q, (snapshot) => {
+    const items: Request[] = snapshot.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    } as Request));
+    onChange(items);
+  }, (err) => {
+    console.error('Realtime requests error:', err);
+    onError?.(err);
+  });
+
+  return unsubscribe;
+};
+
+/**
+ * Accept a request by setting status and assignedTo
+ */
+export const acceptRequest = async (requestId: string, workerId: string) => {
+  if (!requestId || !workerId) throw new Error('requestId and workerId are required');
+  const ref = doc(db, 'requests', requestId);
+  await updateDoc(ref, {
+    status: 'accepted',
+    assignedTo: workerId,
+    updatedAt: serverTimestamp(),
+  });
+};
 
 /**
  * Fetches all service requests for a specific user
@@ -53,6 +97,29 @@ export const getRequests = async (userId: string): Promise<Request[]> => {
     } as Request));
   } catch (error) {
     console.error('Error fetching requests:', error);
+    throw error;
+  }
+};
+
+/**
+ * Fetches all service requests (for workers/admins views)
+ * @returns Promise with an array of all service requests
+ */
+export const getAllRequests = async (): Promise<Request[]> => {
+  try {
+    const q = query(
+      collection(db, 'requests'),
+      orderBy('createdAt', 'desc')
+    );
+
+    const querySnapshot = await getDocs(q);
+
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    } as Request));
+  } catch (error) {
+    console.error('Error fetching all requests:', error);
     throw error;
   }
 };

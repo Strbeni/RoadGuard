@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import Map from "@/components/Map";
 import ServiceRequestForm from "@/components/ServiceRequestForm";
 import {
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { createRequest, Request as RequestType, getRequests } from "@/services/requests";
+import { subscribeMessages, RequestMessage } from "@/services/messages";
 import { toast } from "@/components/ui/use-toast";
 import { useNavigate } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
@@ -34,6 +36,9 @@ const Dashboard = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [formSubmission, setFormSubmission] = useState<any>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
+  const [messages, setMessages] = useState<RequestMessage[]>([]);
 
   // --- Fetch requests ---
   const fetchRequests = useCallback(async () => {
@@ -98,6 +103,13 @@ const Dashboard = () => {
     getLocation();
     fetchRequests();
   }, [fetchRequests, getLocation]);
+
+  // Subscribe to messages for selected request when details dialog is open
+  useEffect(() => {
+    if (!detailsOpen || !selectedRequest?.id) return;
+    const unsub = subscribeMessages(selectedRequest.id, setMessages, console.error);
+    return () => unsub();
+  }, [detailsOpen, selectedRequest?.id]);
 
   // --- Submit request ---
   const handleRequestSubmit = async (formData: any) => {
@@ -315,6 +327,51 @@ const Dashboard = () => {
           </SheetContent>
         </Sheet>
       </div>
+
+      {/* Request Details Dialog */}
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Request Details</DialogTitle>
+          </DialogHeader>
+          {selectedRequest && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <div className="text-sm text-muted-foreground">Service</div>
+                <div className="font-medium">{selectedRequest.serviceType}</div>
+                <div className="text-sm text-muted-foreground">Vehicle</div>
+                <div>{selectedRequest.vehicleType}</div>
+                <div className="text-sm text-muted-foreground">Location</div>
+                <div>{selectedRequest.location?.address || `${selectedRequest.location?.lat?.toFixed?.(5)}, ${selectedRequest.location?.lng?.toFixed?.(5)}`}</div>
+                {selectedRequest.description && (
+                  <div>
+                    <div className="text-sm text-muted-foreground">Description</div>
+                    <div className="text-sm bg-muted/50 p-2 rounded">{selectedRequest.description}</div>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm text-muted-foreground">Messages</div>
+                <div className="h-48 overflow-auto rounded border p-2 space-y-2 bg-background">
+                  {messages.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">No messages yet</div>
+                  ) : (
+                    messages.map((m) => (
+                      <div key={m.id} className="text-sm">
+                        <div className="font-medium">{m.fromUserId === currentUser?.uid ? 'You' : 'Worker'}</div>
+                        <div className="">{m.body}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {m.createdAt?.toDate ? m.createdAt.toDate().toLocaleString() : ''}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
