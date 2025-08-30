@@ -1,68 +1,176 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+/* Leaflet Map Styles */
+@import url('./styles/map.css');
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
+@layer base {
   :root {
-    color: #213547;
-    background-color: #ffffff;
+    /* RoadGuard Design System - Light Mode */
+    --background: 0 0% 98%;
+    --foreground: 222 21% 22%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 21% 22%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 21% 22%;
+
+    /* Primary - Dark Blue (#1e3a8a) */
+    --primary: 222 71% 32%;
+    --primary-foreground: 0 0% 98%;
+    --primary-light: 222 71% 45%;
+    --primary-dark: 222 71% 20%;
+
+    /* Secondary - Light Grey (#f3f4f6) */
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 222 21% 22%;
+
+    /* Muted - Dark Grey (#374151) */
+    --muted: 210 20% 96%;
+    --muted-foreground: 222 13% 32%;
+
+    /* Accent - Amber (#f59e0b) */
+    --accent: 45 93% 50%;
+    --accent-foreground: 222 21% 22%;
+    --accent-light: 45 93% 65%;
+    --accent-dark: 45 93% 35%;
+
+    /* Success - Emerald */
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 98%;
+
+    /* Warning - Amber (same as accent) */
+    --warning: 45 93% 50%;
+    --warning-foreground: 222 21% 22%;
+
+    /* Destructive - Red (#ef4444) */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 214 31% 91%;
+    --input: 214 31% 91%;
+    --ring: 222 71% 32%;
+
+    /* Map and Location Colors */
+    --map-primary: 222 71% 32%;
+    --map-accent: 45 93% 50%;
+    --map-success: 142 71% 45%;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(222 71% 32%), hsl(222 71% 45%));
+    --gradient-accent: linear-gradient(135deg, hsl(45 93% 50%), hsl(45 93% 65%));
+    --gradient-hero: linear-gradient(135deg, hsl(222 71% 32%) 0%, hsl(222 71% 20%) 100%);
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(222 71% 32% / 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(222 71% 32% / 0.1);
+    --shadow-lg: 0 10px 15px -3px hsl(222 71% 32% / 0.1);
+    --shadow-accent: 0 4px 14px 0 hsl(45 93% 50% / 0.3);
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
   }
-  a:hover {
-    color: #747bff;
+
+  .dark {
+    /* RoadGuard Design System - Dark Mode */
+    --background: 222 21% 8%;
+    --foreground: 0 0% 98%;
+
+    --card: 222 21% 12%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 222 21% 12%;
+    --popover-foreground: 0 0% 98%;
+
+    /* Primary - Lighter Blue for dark mode */
+    --primary: 222 71% 45%;
+    --primary-foreground: 222 21% 8%;
+    --primary-light: 222 71% 55%;
+    --primary-dark: 222 71% 32%;
+
+    /* Secondary - Dark Grey */
+    --secondary: 222 13% 20%;
+    --secondary-foreground: 0 0% 98%;
+
+    /* Muted */
+    --muted: 222 13% 20%;
+    --muted-foreground: 215 20% 65%;
+
+    /* Accent - Amber (brighter in dark mode) */
+    --accent: 45 93% 55%;
+    --accent-foreground: 222 21% 8%;
+    --accent-light: 45 93% 70%;
+    --accent-dark: 45 93% 40%;
+
+    /* Success */
+    --success: 142 71% 50%;
+    --success-foreground: 222 21% 8%;
+
+    /* Warning */
+    --warning: 45 93% 55%;
+    --warning-foreground: 222 21% 8%;
+
+    /* Destructive */
+    --destructive: 0 84% 65%;
+    --destructive-foreground: 222 21% 8%;
+
+    --border: 222 13% 20%;
+    --input: 222 13% 20%;
+    --ring: 222 71% 45%;
+
+    /* Map Colors for Dark Mode */
+    --map-primary: 222 71% 45%;
+    --map-accent: 45 93% 55%;
+    --map-success: 142 71% 50%;
+
+    /* Gradients for Dark Mode */
+    --gradient-primary: linear-gradient(135deg, hsl(222 71% 45%), hsl(222 71% 55%));
+    --gradient-accent: linear-gradient(135deg, hsl(45 93% 55%), hsl(45 93% 70%));
+    --gradient-hero: linear-gradient(135deg, hsl(222 71% 45%) 0%, hsl(222 71% 32%) 100%);
+
+    /* Shadows for Dark Mode */
+    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
+    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.4);
+    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.5);
+    --shadow-accent: 0 4px 14px 0 hsl(45 93% 55% / 0.4);
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
   }
-  button {
-    background-color: #f9f9f9;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
   }
 }
