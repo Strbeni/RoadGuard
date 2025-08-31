@@ -12,8 +12,11 @@ import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 're
 import { subscribeAllPendingRequests, acceptRequest, Request as FirestoreRequest } from "@/services/requests";
 import { sendNotification } from "@/services/notifications";
 import { subscribeMessages, RequestMessage } from "@/services/messages";
+import { saveCompletedJob, getWorkerCompletedJobs } from "@/services/completedJobs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "@/hooks/use-toast";
 import NotificationBell from "@/components/NotificationBell";
+import { Chat } from "@/components/Chat";
 
 // Fix for default marker icons in Leaflet with Webpack
 const defaultIcon = new L.Icon({
@@ -43,7 +46,8 @@ import {
   Phone,
   Star,
   HardHat,
-  Map as MapIcon
+  Map as MapIcon,
+  History
 } from "lucide-react";
 
 interface ServiceRequest {
@@ -74,17 +78,37 @@ interface AcceptedJob {
   acceptedAt: Date;
 }
 
+interface CompletedJob {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  vehicleType: string;
+  serviceType: string;
+  location: string;
+  coordinates: [number, number];
+  estimatedPay: string;
+  acceptedAt: Date;
+  completedAt: Date;
+  workerId: string;
+  requestId: string;
+  status: 'completed';
+}
+
 const WorkerDashboard = () => {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('available');
   const [availableRequests, setAvailableRequests] = useState<ServiceRequest[]>([]);
   const [acceptedJob, setAcceptedJob] = useState<AcceptedJob | null>(null);
+  const [completedJobs, setCompletedJobs] = useState<CompletedJob[]>([]);
   const [workerStatus, setWorkerStatus] = useState<'available' | 'busy' | 'offline'>('available');
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number]>([27.7172, 85.3240]); // Default to Kathmandu
   const [locationError, setLocationError] = useState<string | null>(null);
   const mapRef = useRef<L.Map>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [mapCoords, setMapCoords] = useState<[number, number] | null>(null);
   const [mapAddress, setMapAddress] = useState<string>("");
@@ -93,27 +117,41 @@ const WorkerDashboard = () => {
   const [messages, setMessages] = useState<RequestMessage[]>([]);
   const [sortBy, setSortBy] = useState<'recent' | 'nearest' | 'urgency'>('recent');
 
-  // Request user location on component mount
+  // Load user's location and completed jobs on mount
   useEffect(() => {
+    // Load completed jobs
+    const loadCompletedJobs = async () => {
+      if (currentUser?.uid) {
+        try {
+          const jobs = await getWorkerCompletedJobs(currentUser.uid, 10);
+          setCompletedJobs(jobs);
+        } catch (error) {
+          console.error('Error loading completed jobs:', error);
+          // Fallback to existing completed jobs if any
+        }
+      }
+    };
+
+    loadCompletedJobs();
+
+    // Load user's location
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const { latitude, longitude } = position.coords;
           setUserLocation([latitude, longitude]);
           setMapCenter([latitude, longitude]);
-          setLocationError(null);
-          
-          // Update available requests with distances from user's location
-          updateRequestDistances(latitude, longitude);
+          setIsLoading(false);
         },
         (error) => {
           console.error('Error getting location:', error);
-          setLocationError('Unable to retrieve your location. Please enable location services for a better experience.');
-          // Use default location if geolocation fails
-          updateRequestDistances(mapCenter[0], mapCenter[1]);
+          setLocationError('Could not get your location. Using default map view.');
+          setIsLoading(false);
         }
       );
     } else {
+      setLocationError('Geolocation is not supported by your browser. Using default map view.');
+      setIsLoading(false);
       setLocationError('Geolocation is not supported by your browser.');
       updateRequestDistances(mapCenter[0], mapCenter[1]);
     }
@@ -234,26 +272,74 @@ const WorkerDashboard = () => {
     setAvailableRequests(prev => prev.filter(r => r.id !== requestId));
   };
 
-  const updateJobStatus = (status: AcceptedJob['status']) => {
-    if (acceptedJob) {
-      setAcceptedJob({ ...acceptedJob, status });
-      // notify user about status change
-      const req = availableRequests.find(r => r.id === acceptedJob.id);
-      if (req?.requestUserId) {
-        sendNotification(req.requestUserId, {
-          title: 'Job Update',
-          body: `Mechanic status changed to ${getStatusText(status)}.`,
-          type: 'request_update',
-          data: { requestId: acceptedJob.id, status },
-        }).catch(console.error);
-      }
-      if (status === 'completed') {
-        // In a real app, this would update the job status in your backend
+  const updateJobStatus = async (status: AcceptedJob['status']) => {
+    if (!acceptedJob || !currentUser?.uid) return;
+
+    // Update local state first for responsiveness
+    setAcceptedJob({ ...acceptedJob, status });
+    
+    // Try to find the request in available requests or use accepted job data
+    const req = availableRequests.find(r => r.id === acceptedJob.id);
+    
+    // Notify user about status change if we have the request user ID
+    const requestUserId = req?.requestUserId;
+    if (requestUserId) {
+      sendNotification(requestUserId, {
+        title: 'Job Update',
+        body: `Mechanic status changed to ${getStatusText(status)}.`,
+        type: 'request_update',
+        data: { requestId: acceptedJob.id, status },
+      }).catch(console.error);
+    }
+
+    if (status === 'completed') {
+      try {
+        const completed: CompletedJob = {
+          id: acceptedJob.id,
+          customerName: acceptedJob.customerName,
+          customerPhone: acceptedJob.customerPhone || 'Not provided',
+          vehicleType: acceptedJob.vehicleType || 'Unknown',
+          serviceType: acceptedJob.serviceType || 'Service',
+          location: acceptedJob.location || 'Location not specified',
+          coordinates: acceptedJob.coordinates || [0, 0],
+          estimatedPay: acceptedJob.estimatedPay || '$0.00',
+          acceptedAt: acceptedJob.acceptedAt || new Date(),
+          completedAt: new Date(),
+          workerId: currentUser.uid,
+          requestId: acceptedJob.id,
+          status: 'completed'
+        };
+
+        // Save to Firestore
+        await saveCompletedJob(completed);
+        
+        // Update local state
+        setCompletedJobs(prev => [completed, ...prev]);
+        
+        // Show success message
+        toast({
+          title: 'Job Completed',
+          description: 'The job has been marked as completed.',
+        });
+        
+        // Reset UI after a short delay
         setTimeout(() => {
           setAcceptedJob(null);
           setWorkerStatus('available');
           setActiveTab('available');
-        }, 2000);
+        }, 1000);
+        
+      } catch (error) {
+        console.error('Error completing job:', error);
+        // Revert local state on error
+        setAcceptedJob({ ...acceptedJob, status: 'started' });
+        
+        // Show error to user
+        toast({
+          title: 'Error',
+          description: 'Failed to complete the job. Please try again.',
+          variant: 'destructive',
+        });
       }
     }
   };
@@ -306,6 +392,38 @@ const WorkerDashboard = () => {
       case 'started': return 'Service in Progress';
       case 'completed': return 'Job Completed';
       default: return status;
+    }
+  };
+
+  // Open Google Maps directions from mechanic (userLocation) to customer's request/job location
+  const openDirections = () => {
+    if (!acceptedJob) return;
+    const dest = `${acceptedJob.coordinates[0]},${acceptedJob.coordinates[1]}`;
+    const origin = userLocation ? `${userLocation[0]},${userLocation[1]}` : "";
+    const url = origin
+      ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(dest)}&travelmode=driving`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}&travelmode=driving`;
+    window.open(url, '_blank');
+  };
+
+  const copyCustomerPhone = async () => {
+    if (!acceptedJob?.customerPhone) return;
+    const text = acceptedJob.customerPhone;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      toast({ title: 'Copied', description: `Phone ${text} copied to clipboard.` });
+    } catch (e) {
+      console.error('Copy failed', e);
+      toast({ title: 'Copy failed', description: 'Unable to copy phone number.', variant: 'destructive' });
     }
   };
 
@@ -365,14 +483,17 @@ const WorkerDashboard = () => {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg">Current Job</CardTitle>
-                <Badge variant="secondary">{getStatusText(acceptedJob.status)}</Badge>
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-2 gap-4 text-sm mb-4">
                 <div>
                   <p className="text-muted-foreground">Customer</p>
                   <p className="font-medium">{acceptedJob.customerName}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Status</p>
+                  <p className="font-medium">{getStatusText(acceptedJob.status)}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Service</p>
@@ -394,11 +515,11 @@ const WorkerDashboard = () => {
               </div>
 
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="flex-1">
+                <Button size="sm" variant="outline" className="flex-1" onClick={copyCustomerPhone}>
                   <Phone className="h-4 w-4 mr-2" />
                   Call Customer
                 </Button>
-                <Button size="sm" variant="outline">
+                <Button size="sm" variant="outline" onClick={openDirections}>
                   <Navigation className="h-4 w-4 mr-2" />
                   Navigate
                 </Button>
@@ -427,29 +548,59 @@ const WorkerDashboard = () => {
                   </Button>
                 )}
               </div>
+              
+              {/* Chat Section */}
+              <div className="border-t pt-4 mt-4">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="font-medium">Chat with {acceptedJob.customerName}</h3>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setIsChatExpanded(!isChatExpanded)}
+                  >
+                    {isChatExpanded ? 'Hide Chat' : 'Show Chat'}
+                  </Button>
+                </div>
+                
+                {isChatExpanded && (
+                  <div className="border rounded-lg h-64 bg-background">
+                    <Chat 
+                      requestId={acceptedJob.id}
+                      currentUserId={currentUser?.uid || ''}
+                      otherUserName={acceptedJob.customerName}
+                      className="h-full"
+                    />
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
         )}
 
-        {/* Available Requests */}
+        {/* Available Requests / Work History toggle */}
         {workerStatus === 'available' && !acceptedJob && (
           <div className="space-y-3 w-[800px]">
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-lg">Available Requests Near You</h2>
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-muted-foreground">Sort by</span>
-                <select
-                  className="border rounded px-2 py-1 text-sm"
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as any)}
-                >
-                  <option value="recent">Most Recent</option>
-                  <option value="nearest">Nearest</option>
-                  <option value="urgency">Urgency</option>
-                </select>
+              <div className="flex items-center gap-2">
+                <Button variant={activeTab === 'available' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('available')}>Available</Button>
+                <Button variant={activeTab === 'history' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('history')}>History</Button>
               </div>
+              {activeTab === 'available' && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Sort by</span>
+                  <select
+                    className="border rounded px-2 py-1 text-sm"
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as any)}
+                  >
+                    <option value="recent">Most Recent</option>
+                    <option value="nearest">Nearest</option>
+                    <option value="urgency">Urgency</option>
+                  </select>
+                </div>
+              )}
             </div>
-            {availableRequests.length === 0 ? (
+            {activeTab === 'available' && (availableRequests.length === 0 ? (
               <Card>
                 <CardContent className="p-6 text-center">
                   <MapPin className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
@@ -522,6 +673,99 @@ const WorkerDashboard = () => {
                   </CardContent>
                 </Card>
               ))
+            ))}
+
+            {activeTab === 'history' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-lg font-medium">Completed Jobs</h3>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={async () => {
+                      if (currentUser?.uid) {
+                        try {
+                          const jobs = await getWorkerCompletedJobs(currentUser.uid, 10);
+                          setCompletedJobs(jobs);
+                          toast({
+                            title: 'Refreshed',
+                            description: 'Completed jobs list has been updated.',
+                          });
+                        } catch (error) {
+                          console.error('Error refreshing jobs:', error);
+                          toast({
+                            title: 'Error',
+                            description: 'Failed to refresh completed jobs.',
+                            variant: 'destructive',
+                          });
+                        }
+                      }
+                    }}
+                  >
+                    Refresh
+                  </Button>
+                </div>
+                
+                {isLoading ? (
+                  <div className="flex justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  </div>
+                ) : completedJobs.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <History className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+                      <h4 className="font-medium text-lg">No completed jobs yet</h4>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Jobs you complete will appear here.
+                      </p>
+                      <Button 
+                        variant="outline" 
+                        className="mt-4"
+                        onClick={() => setActiveTab('available')}
+                      >
+                        Find Available Jobs
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="space-y-3">
+                    {completedJobs.map((job) => (
+                      <Card key={job.id} className="hover:bg-accent/50 transition-colors">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="font-medium flex items-center gap-2">
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                  Completed
+                                </span>
+                                <span>{job.serviceType}</span>
+                              </div>
+                              <div className="text-sm text-muted-foreground mt-1">
+                                {job.customerName} • {job.vehicleType}
+                              </div>
+                              <div className="text-sm mt-1">
+                                <MapPin className="inline h-3.5 w-3.5 mr-1 text-muted-foreground" />
+                                {job.location}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-sm text-muted-foreground">
+                                {format(job.completedAt, 'MMM d, yyyy')}
+                              </div>
+                              <div className="text-sm font-medium mt-1">
+                                {job.estimatedPay}
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {format(job.completedAt, 'h:mm a')}
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

@@ -5,6 +5,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Chat } from "@/components/Chat";
 import Map from "@/components/Map";
 import ServiceRequestForm from "@/components/ServiceRequestForm";
 import {
@@ -19,7 +20,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { createRequest, Request as RequestType, getRequests } from "@/services/requests";
 import { subscribeMessages, RequestMessage } from "@/services/messages";
-import { toast } from "@/components/ui/use-toast";
+import { toast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 
@@ -39,6 +40,27 @@ const Dashboard = () => {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
   const [messages, setMessages] = useState<RequestMessage[]>([]);
+  const [requestFilter, setRequestFilter] = useState<'active' | 'history' | 'all'>('active');
+
+  const getStatusBadge = (status: string) => {
+    const statusMap: Record<string, { text: string; variant: string }> = {
+      'pending': { text: 'Pending', variant: 'bg-yellow-100 text-yellow-800' },
+      'accepted': { text: 'Accepted', variant: 'bg-blue-100 text-blue-800' },
+      'en_route': { text: 'En Route', variant: 'bg-indigo-100 text-indigo-800' },
+      'arrived': { text: 'Arrived', variant: 'bg-purple-100 text-purple-800' },
+      'started': { text: 'In Progress', variant: 'bg-cyan-100 text-cyan-800' },
+      'completed': { text: 'Completed', variant: 'bg-green-100 text-green-800' },
+      'cancelled': { text: 'Cancelled', variant: 'bg-red-100 text-red-800' },
+    };
+
+    const statusInfo = statusMap[status] || { text: status, variant: 'bg-gray-100 text-gray-800' };
+    
+    return (
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusInfo.variant}`}>
+        {statusInfo.text}
+      </span>
+    );
+  };
 
   // --- Fetch requests ---
   const fetchRequests = useCallback(async () => {
@@ -110,6 +132,35 @@ const Dashboard = () => {
     const unsub = subscribeMessages(selectedRequest.id, setMessages, console.error);
     return () => unsub();
   }, [detailsOpen, selectedRequest?.id]);
+
+  // --- Toggle request details ---
+  const toggleDetails = (request: Request) => {
+    setSelectedRequest(request);
+    setDetailsOpen(true);
+  };
+
+  // --- Handle request status changes ---
+  const handleRequestStatusChange = async (requestId: string, status: Request['status']) => {
+    if (!currentUser) {
+      toast({
+        title: "Error",
+        description: "You must be logged in to submit a request.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Update request status logic here
+    } catch (err) {
+      console.error("Error updating request status:", err);
+      toast({
+        title: "Error",
+        description: "Failed to update request status.",
+        variant: "destructive",
+      });
+    }
+  };
 
   // --- Submit request ---
   const handleRequestSubmit = async (formData: any) => {
@@ -252,7 +303,18 @@ const Dashboard = () => {
                 <RefreshCw className={`h-3 w-3 ${isLoadingRequests ? "animate-spin" : ""}`} />
               </Button>
             </div>
-            <History className="h-4 w-4 text-muted-foreground" />
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Filter</span>
+              <select
+                className="border rounded px-2 py-1 text-xs"
+                value={requestFilter}
+                onChange={(e) => setRequestFilter(e.target.value as any)}
+              >
+                <option value="active">Active</option>
+                <option value="history">History</option>
+                <option value="all">All</option>
+              </select>
+            </div>
           </CardHeader>
           <CardContent>
             {isLoadingRequests ? (
@@ -263,14 +325,24 @@ const Dashboard = () => {
               </div>
             ) : (
               <div className="space-y-4">
-                {requests.map((req) => (
-                  <div key={req.id} className="border rounded-lg p-4">
+                {requests
+                  .filter((req) => {
+                    if (requestFilter === 'all') return true;
+                    const isHistory = req.status === 'completed' || req.status === 'cancelled' || req.status === 'rejected';
+                    return requestFilter === 'history' ? isHistory : !isHistory;
+                  })
+                  .map((req) => (
+                  <div 
+                    key={req.id} 
+                    className="border rounded-lg p-4 hover:bg-accent/10 cursor-pointer transition-colors"
+                    onClick={() => toggleDetails(req)}
+                  >
                     <div className="flex justify-between">
                       <div>
                         <div className="font-medium">{req.serviceType}</div>
                         <div className="text-sm text-muted-foreground">{req.vehicleType}</div>
                       </div>
-                      <Badge>{req.status}</Badge>
+                      {getStatusBadge(req.status)}
                     </div>
                     <div className="mt-2 text-sm text-muted-foreground">{formatCreatedAt(req.createdAt)}</div>
                   </div>
@@ -330,42 +402,52 @@ const Dashboard = () => {
 
       {/* Request Details Dialog */}
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Request Details</DialogTitle>
           </DialogHeader>
           {selectedRequest && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <div className="text-sm text-muted-foreground">Service</div>
-                <div className="font-medium">{selectedRequest.serviceType}</div>
-                <div className="text-sm text-muted-foreground">Vehicle</div>
-                <div>{selectedRequest.vehicleType}</div>
-                <div className="text-sm text-muted-foreground">Location</div>
-                <div>{selectedRequest.location?.address || `${selectedRequest.location?.lat?.toFixed?.(5)}, ${selectedRequest.location?.lng?.toFixed?.(5)}`}</div>
-                {selectedRequest.description && (
-                  <div>
-                    <div className="text-sm text-muted-foreground">Description</div>
-                    <div className="text-sm bg-muted/50 p-2 rounded">{selectedRequest.description}</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <h3 className="text-lg font-medium">{selectedRequest.serviceType}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {selectedRequest.vehicleType} • {formatCreatedAt(selectedRequest.createdAt)}
+                  </p>
+                  <div className="pt-1">
+                    {getStatusBadge(selectedRequest.status)}
                   </div>
-                )}
+                </div>
+                
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium mb-1">Location</h4>
+                    <p className="text-sm">
+                      {typeof selectedRequest.location === 'string' 
+                        ? selectedRequest.location 
+                        : selectedRequest.location?.address || 'Location not specified'}
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="text-sm font-medium mb-1">Description</h4>
+                    <p className="text-sm text-muted-foreground">
+                      {selectedRequest.description || 'No description provided.'}
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="space-y-2">
-                <div className="text-sm text-muted-foreground">Messages</div>
-                <div className="h-48 overflow-auto rounded border p-2 space-y-2 bg-background">
-                  {messages.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">No messages yet</div>
-                  ) : (
-                    messages.map((m) => (
-                      <div key={m.id} className="text-sm">
-                        <div className="font-medium">{m.fromUserId === currentUser?.uid ? 'You' : 'Worker'}</div>
-                        <div className="">{m.body}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {m.createdAt?.toDate ? m.createdAt.toDate().toLocaleString() : ''}
-                        </div>
-                      </div>
-                    ))
-                  )}
+              
+              {/* Chat Section */}
+              <div className="border-l pl-6">
+                <div className="h-[400px] flex flex-col">
+                  <h4 className="text-sm font-medium mb-4">Chat with Service Provider</h4>
+                  <Chat 
+                    requestId={selectedRequest.id}
+                    currentUserId={currentUser?.uid || ''}
+                    otherUserName={selectedRequest.assignedToName || 'Service Provider'}
+                    className="flex-1"
+                  />
                 </div>
               </div>
             </div>
