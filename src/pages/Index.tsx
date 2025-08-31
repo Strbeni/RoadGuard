@@ -100,6 +100,7 @@ function Index() {
 
       {/* Main Content */}
       <main className="flex-grow">
+        
         {/* Hero Section */}
         <section className="border-b border-border bg-[radial-gradient(ellipse_at_top,rgba(255,0,0,0.15),transparent_60%)]">
           <div className="mx-auto max-w-6xl px-4 py-12 md:py-20">

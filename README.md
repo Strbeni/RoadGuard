@@ -50,7 +50,11 @@ RoadGuard is a modern web application that connects users in need of emergency r
 
 1. Clone the repository:
    ```bash
+<<<<<<< HEAD
    git clone https://github.com/strbeni/roadguard.git
+=======
+   git clone https://github.com/yourusername/roadguard.git
+>>>>>>> 489505086ca5d4090b00c100e1253e65efe5f464
    cd roadguard
    ```
 
@@ -132,4 +136,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Create React App](https://create-react-app.dev/)
 - [Firebase](https://firebase.google.com/)
 - [Tailwind CSS](https://tailwindcss.com/)
+<<<<<<< HEAD
 - [Shadcn UI](https://ui.shadcn.com/)
+=======
+- [Shadcn UI](https://ui.shadcn.com/)
+>>>>>>> 489505086ca5d4090b00c100e1253e65efe5f464
