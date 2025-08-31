@@ -50,11 +50,7 @@ RoadGuard is a modern web application that connects users in need of emergency r
 
 1. Clone the repository:
    ```bash
-<<<<<<< HEAD
-   git clone https://github.com/strbeni/roadguard.git
-=======
    git clone https://github.com/yourusername/roadguard.git
->>>>>>> 489505086ca5d4090b00c100e1253e65efe5f464
    cd roadguard
    ```
 
